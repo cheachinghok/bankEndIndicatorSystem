@@ -555,3 +555,85 @@ pytest tests/unit/test_signal_worker.py -v
 Phase 9 = Flutter mobile app (Dashboard, Signals, Market Detail, Signal Detail screens per the original spec).
 Phase 10 = auth + push notifications (Firebase Auth + FCM).
 Phase 11 = ML confirmation layer (only after enough signal history + backtest validation).
+
+---
+
+# Phase 8.5 — Deploy to Railway
+
+Everything you built in Phases 1–8 runs locally. Before touching Flutter, deploy the backend to Railway so the mobile app can hit a real production URL from day one.
+
+## What's in the repo for deployment
+
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Reproducible container. Same image serves both services (different start commands). |
+| `.dockerignore` | Keeps `.env`, `.venv`, `.git`, tests out of the image. |
+| `railway.toml` | Declares Dockerfile builder + healthcheck + restart policy for the default service (API). |
+| `app/main.py` `/healthz` | Deep health check — pings Postgres + Redis. Returns 503 if either is down, so Railway routes away from bad instances. |
+| `app/core/config.py` | Auto-transforms Railway's `postgres://` DATABASE_URL to `postgresql+asyncpg://`. |
+
+## One-time Railway setup
+
+1. **Sign up** at https://railway.app (GitHub login is easiest).
+2. **New Project** → **Deploy from GitHub repo** → pick `cheachinghok/bankEndIndicatorSystem`.
+3. Railway will detect the `Dockerfile` (via `railway.toml` at repo root — but ours is in `backend/`, see step 4).
+4. **IMPORTANT — set the root directory**: in service Settings → Source → set **Root Directory** to `backend`. This is needed because our code lives in `backend/`, not the repo root.
+5. **Add Postgres**: Project → New → Database → **PostgreSQL**. Railway auto-injects `DATABASE_URL` into the service.
+6. **Add Redis**: Project → New → Database → **Redis**. Auto-injects `REDIS_URL`.
+7. **Add environment variables** to the API service (Settings → Variables):
+   - `OANDA_API_TOKEN` = *your new rotated token*
+   - `OANDA_ACCOUNT_ID` = *your practice account id*
+   - `OANDA_API_URL` = `https://api-fxpractice.oanda.com` (change to `https://api-fxtrade.oanda.com` for live later)
+   - `OANDA_ENVIRONMENT` = `practice`
+   - `LOG_LEVEL` = `INFO`
+   - Do NOT set `DATABASE_URL` or `REDIS_URL` manually — Railway injects those.
+8. **Deploy** — Railway builds the image and runs the API. Watch build logs.
+9. **Verify** — Railway gives you a URL like `https://<something>.up.railway.app`. Hit `https://<url>/healthz`:
+   ```json
+   {"api":"ok","db":"ok","redis":"ok"}
+   ```
+
+## Add the second service — the workers
+
+The API service is running. The workers (price stream + candle poller + signal worker) need their own Railway service pointing to the same repo, with a different start command.
+
+1. In the same project → **New** → **GitHub Repo** → pick the same repo.
+2. Root Directory: `backend` (same as before).
+3. Settings → **Deploy** → **Custom Start Command**: `python -m app.workers.main`
+4. Settings → **Variables** → **Reference Variables** → copy all the OANDA vars from the API service. Do NOT reset DATABASE_URL / REDIS_URL — Railway shares those across services in the same project via the built-in references.
+5. Deploy. Logs should show:
+   ```
+   INFO workers: workers started: ['XAUUSD']
+   INFO app.workers.signal_worker: signal worker subscribed to candles:XAUUSD:15m
+   INFO app.workers.price_stream: first tick received: XAUUSD bid=... ask=...
+   ```
+
+## Backfill history so signals actually fire
+
+The signal worker needs ~35 days of 4h candles before it can compute trend. Trigger backfill by hitting the market endpoint (replace `<url>` with your Railway URL):
+
+```bash
+for tf in 4h 1h 15m; do
+  curl -s "https://<url>/api/v1/market/XAUUSD/candles?timeframe=$tf&limit=1000" > /dev/null
+done
+```
+
+Then trigger a signal manually to test the loop (you'll need railway CLI or another way to run redis-cli in the deployed Redis; easiest is to just wait for the next 15m candle close, which happens every 15 minutes).
+
+## Cost expectations
+
+- Postgres: ~$5/mo
+- Redis: ~$5/mo
+- API service compute: ~$5/mo
+- Worker service compute: ~$5/mo
+- **Total: ~$20/mo** at MVP scale. Scale up as needed.
+
+## Rotating the OANDA token (do NOT skip)
+
+If the token you're deploying with has been in shell history or curl -v output at any point, **rotate it before deploying**:
+1. https://www.oanda.com/demo-account/tpa/personal_token → Revoke
+2. Generate a new one → paste ONLY into Railway env vars → never anywhere else
+
+## Next
+
+Phase 9 = Flutter mobile app, pointing at your Railway URL.
