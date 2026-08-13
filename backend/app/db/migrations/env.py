@@ -14,7 +14,22 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+_db_url = get_settings().database_url
+config.set_main_option("sqlalchemy.url", _db_url)
+
+# Debug: print (masked) DB URL so deploy logs make connection issues obvious.
+def _mask(u: str) -> str:
+    if "://" not in u:
+        return u
+    scheme, rest = u.split("://", 1)
+    if "@" in rest:
+        creds, host = rest.split("@", 1)
+        user = creds.split(":", 1)[0]
+        return f"{scheme}://{user}:***@{host}"
+    return f"{scheme}://{rest}"
+
+
+print(f"[alembic] connecting to: {_mask(_db_url)}", flush=True)
 
 target_metadata = Base.metadata
 

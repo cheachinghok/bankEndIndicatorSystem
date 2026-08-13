@@ -28,8 +28,28 @@ def _configure_logging(level: str) -> None:
 async def lifespan(app: FastAPI):
     settings = get_settings()
     _configure_logging(settings.log_level)
+    log = logging.getLogger("app.startup")
+    log.info(
+        "startup config: db=%s redis=%s oanda_token_set=%s oanda_account_set=%s",
+        _mask_url(settings.database_url),
+        _mask_url(settings.redis_url),
+        bool(settings.oanda_api_token),
+        bool(settings.oanda_account_id),
+    )
     yield
     await dispose_engine()
+
+
+def _mask_url(url: str) -> str:
+    """Return a URL with password masked, so we can log connection targets safely."""
+    if "://" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    if "@" in rest:
+        creds, host = rest.split("@", 1)
+        user = creds.split(":", 1)[0]
+        return f"{scheme}://{user}:***@{host}"
+    return f"{scheme}://{rest}"
 
 
 app = FastAPI(
