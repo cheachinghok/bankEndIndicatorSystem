@@ -6,17 +6,39 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _normalize_pg_url(url: str) -> str:
-    """Rewrite Postgres URLs to use the asyncpg driver.
+    """Rewrite Postgres URLs to use the asyncpg driver and asyncpg-compatible params.
 
-    Railway (and most managed Postgres providers) inject DATABASE_URL as
-    `postgres://...` or `postgresql://...`. SQLAlchemy async needs
-    `postgresql+asyncpg://...`. We normalize here in one place so nothing
-    downstream has to care.
+    Railway/Neon/most managed providers inject DATABASE_URL with the psycopg2
+    dialect and query params like `sslmode=require` / `channel_binding=require`.
+    asyncpg doesn't recognize those — it uses `ssl=` instead. We normalize here
+    in one place so nothing downstream has to care.
     """
+    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
     if url.startswith("postgresql://") and "+" not in url.split("://", 1)[0]:
         url = "postgresql+asyncpg://" + url[len("postgresql://"):]
+
+    parsed = urlparse(url)
+    if parsed.query:
+        params = parse_qsl(parsed.query, keep_blank_values=True)
+        cleaned: list[tuple[str, str]] = []
+        need_ssl_require = False
+        for k, v in params:
+            if k == "sslmode":
+                # psycopg2 → asyncpg translation
+                if v in ("require", "verify-ca", "verify-full"):
+                    need_ssl_require = True
+                continue  # drop the sslmode param either way
+            if k == "channel_binding":
+                # Not supported by asyncpg — drop silently
+                continue
+            cleaned.append((k, v))
+        if need_ssl_require and not any(k == "ssl" for k, _ in cleaned):
+            cleaned.append(("ssl", "require"))
+        parsed = parsed._replace(query=urlencode(cleaned))
+        url = urlunparse(parsed)
     return url
 
 
