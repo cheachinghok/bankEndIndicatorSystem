@@ -2,11 +2,18 @@
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
+# NOTE: startCommand and healthcheckPath are intentionally NOT set here.
+# Each service defines its own via the Railway UI (Settings → Deploy) so
+# the workers service can override the API service's defaults.
+#
+# API service (Custom Start Command):
+#   sh -c 'alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'
+#   Healthcheck Path: /healthz
+#
+# Workers service (Custom Start Command):
+#   python -m app.workers.main
+#   Healthcheck Path: (leave empty — workers don't serve HTTP)
+
 [deploy]
-# Default start command — this is what the "api" service runs.
-# The "workers" service should override this to: python -m app.workers.main
-startCommand = "sh -c 'alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'"
-healthcheckPath = "/healthz"
-healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
