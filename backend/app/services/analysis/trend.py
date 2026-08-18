@@ -1,19 +1,29 @@
 """Trend analysis via EMA stacking.
 
-Bullish stack:  price > EMA20 > EMA50 > EMA200
-Bearish stack:  price < EMA20 < EMA50 < EMA200
+Direction rules (loosened in Phase 8.6 to fire signals more often on real
+markets where strict stacking is rare):
+
+    Count of 3 bullish conditions:
+        price > EMA200
+        EMA20  > EMA50
+        EMA50  > EMA200
+    3 hits → strong BULLISH (full stack score)
+    2 hits → weak BULLISH
+    Same, mirrored, for BEARISH.
+    <2 hits either way → NEUTRAL.
 
 Scoring (max 25):
-    Full alignment           15
-    Price on trend side       5
+    Full stack (3/3)         15
+    Partial (2/3)             8
+    Price on trend side       5   (extra beyond the above if 3/3)
     EMA20 slope in direction  3
-    Not equal to zero         2
+    Base bonus (3/3 only)     2
 """
 import math
 from collections.abc import Sequence
 
 from app.services.analysis.types import TREND_MAX, Direction, TrendAnalysis
-from app.services.indicators.ema import ema_latest, ema
+from app.services.indicators.ema import ema, ema_latest
 
 MIN_HISTORY = 210  # need at least EMA200 seed + a few extra for slope check
 
@@ -37,47 +47,58 @@ def analyze_trend(closes: Sequence[float]) -> TrendAnalysis:
     ema20_series = ema(closes, 20)
     ema20_slope_up = ema20_series[-1] > ema20_series[-3]  # 3-bar slope
 
+    # Range detection: if the three EMAs are all within 0.1% of each other,
+    # the market is flat/ranging — skip direction detection so we don't
+    # pick a side from floating-point drift.
+    ema_span = max(ema20, ema50, ema200) - min(ema20, ema50, ema200)
+    if ema_span / max(ema200, 1e-9) < 0.001:
+        return TrendAnalysis(
+            direction=Direction.NEUTRAL,
+            score=0.0,
+            ema20=ema20,
+            ema50=ema50,
+            ema200=ema200,
+            price=price,
+            reasons=["EMAs bunched (<0.1% spread) — market is ranging"],
+        )
+
+    bull_votes = sum([price > ema200, ema20 > ema50, ema50 > ema200])
+    bear_votes = sum([price < ema200, ema20 < ema50, ema50 < ema200])
+
     reasons: list[str] = []
     direction = Direction.NEUTRAL
     score = 0.0
 
-    bullish_stack = ema20 > ema50 > ema200
-    bearish_stack = ema20 < ema50 < ema200
-
-    if bullish_stack:
+    if bull_votes == 3:
         direction = Direction.BULLISH
-        score += 15
-        reasons.append("EMA20 > EMA50 > EMA200 (bullish stack)")
-        if price > ema200:
-            score += 5
-            reasons.append("Price above EMA200")
+        score = 15 + 5 + 2  # base + price bonus (implicit in vote) + full-stack bonus
+        reasons.append("Full bullish stack: price > EMA20 > EMA50 > EMA200")
         if ema20_slope_up:
             score += 3
             reasons.append("EMA20 slope up")
-        score += 2  # base bonus for having a clear stack
-    elif bearish_stack:
+    elif bear_votes == 3:
         direction = Direction.BEARISH
-        score += 15
-        reasons.append("EMA20 < EMA50 < EMA200 (bearish stack)")
-        if price < ema200:
-            score += 5
-            reasons.append("Price below EMA200")
+        score = 15 + 5 + 2
+        reasons.append("Full bearish stack: price < EMA20 < EMA50 < EMA200")
         if not ema20_slope_up:
             score += 3
             reasons.append("EMA20 slope down")
-        score += 2
+    elif bull_votes == 2:
+        direction = Direction.BULLISH
+        score = 8
+        reasons.append(f"Partial bullish alignment ({bull_votes}/3 conditions)")
+        if ema20_slope_up:
+            score += 3
+            reasons.append("EMA20 slope up")
+    elif bear_votes == 2:
+        direction = Direction.BEARISH
+        score = 8
+        reasons.append(f"Partial bearish alignment ({bear_votes}/3 conditions)")
+        if not ema20_slope_up:
+            score += 3
+            reasons.append("EMA20 slope down")
     else:
-        # Partial alignment: award small score if price on same side of EMA200 as EMA20.
-        if price > ema200 and ema20 > ema50:
-            direction = Direction.BULLISH
-            score = 8
-            reasons.append("Partial bullish alignment (EMA20>EMA50, price>EMA200)")
-        elif price < ema200 and ema20 < ema50:
-            direction = Direction.BEARISH
-            score = 8
-            reasons.append("Partial bearish alignment (EMA20<EMA50, price<EMA200)")
-        else:
-            reasons.append("EMAs not aligned — no clear trend")
+        reasons.append("EMAs not aligned — no clear trend")
 
     return TrendAnalysis(
         direction=direction,

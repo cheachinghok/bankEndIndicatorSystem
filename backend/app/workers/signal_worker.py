@@ -131,6 +131,13 @@ async def run_signal_worker(
     await pubsub.subscribe(channel)
     log.info("signal worker subscribed to %s", channel)
 
+    # Fire once at startup so we don't wait 15 minutes for the first signal.
+    try:
+        log.info("signal worker: running initial analysis for %s", symbol)
+        await _handle_candle_event(session_factory, redis, symbol)
+    except Exception as e:  # noqa: BLE001
+        log.warning("initial signal analysis failed: %r", e)
+
     try:
         while True:
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)

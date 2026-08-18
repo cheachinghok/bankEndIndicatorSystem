@@ -75,6 +75,49 @@ def multi_timeframe_gate(analyses: dict[str, AnalysisResult]) -> MtfDecision:
     )
 
 
+def check_pullback(analyses: dict[str, AnalysisResult]) -> MtfDecision | None:
+    """Detect a pullback-in-trend opportunity.
+
+    Classic setup: higher timeframe is trending, but the lower timeframe has
+    pulled back to a technical support (near EMA20) with oversold RSI. This
+    is a high-quality entry that our normal MTF gate rejects because the 15M
+    momentum is (temporarily) against the trend.
+
+    Bull pullback:
+        4H trend direction = BULLISH
+        15M RSI < 40 (oversold)
+        15M price within 0.5% of its EMA20 (pulled back to support)
+
+    Bear pullback mirrors.
+
+    Returns None if no pullback setup, or an MtfDecision(BUY|SELL, reason).
+    """
+    tf4h = analyses.get("4h")
+    tf15 = analyses.get("15m")
+    if tf4h is None or tf15 is None:
+        return None
+
+    price = tf15.price
+    ema20 = tf15.trend.ema20
+    rsi = tf15.momentum.rsi
+    if price != price or ema20 != ema20 or rsi != rsi:  # NaN check
+        return None
+
+    near_ema20 = abs(price - ema20) / ema20 <= 0.005  # within 0.5%
+
+    if tf4h.trend.direction == Direction.BULLISH and rsi < 40 and near_ema20:
+        return MtfDecision(
+            SignalDirection.BUY,
+            f"Pullback in 4H uptrend: 15M RSI {rsi:.1f} at EMA20 support",
+        )
+    if tf4h.trend.direction == Direction.BEARISH and rsi > 60 and near_ema20:
+        return MtfDecision(
+            SignalDirection.SELL,
+            f"Rally in 4H downtrend: 15M RSI {rsi:.1f} at EMA20 resistance",
+        )
+    return None
+
+
 def blended_analysis_score(analyses: dict[str, AnalysisResult]) -> float:
     """Weighted average of analysis scores across timeframes.
 

@@ -252,6 +252,33 @@ def test_generated_at_stored() -> None:
     assert result.generated_at == now
 
 
+def test_pullback_fires_buy_when_4h_bullish_and_15m_oversold_at_ema20() -> None:
+    """Even though 15M direction is BEARISH (which normally WAITs),
+    the pullback path should override with a BUY."""
+    bull_4h = _mk_analysis(Direction.BULLISH, score=70.0, price=4400.0, atr=5.0)
+    neutral_1h = _mk_analysis(Direction.BULLISH, score=50.0, price=4400.0, atr=5.0)
+    bear_15m = _mk_analysis(Direction.BEARISH, score=45.0, price=4400.0, atr=5.0)
+    # Force 15m into "pullback" state: RSI oversold, price at EMA20.
+    from app.services.analysis.types import MomentumAnalysis, TrendAnalysis
+    bear_15m = AnalysisResult(
+        direction=Direction.BEARISH, score=45.0, price=4400.0,
+        trend=TrendAnalysis(
+            direction=Direction.BEARISH, score=12.0,
+            ema20=4400.0, ema50=4420.0, ema200=4450.0, price=4400.0, reasons=[],
+        ),
+        momentum=MomentumAnalysis(
+            direction=Direction.BEARISH, score=8.0, rsi=32.0,
+            macd=-0.5, macd_signal=-0.3, macd_histogram=-0.2, reasons=[],
+        ),
+        volatility=bear_15m.volatility, structure=bear_15m.structure,
+        support_resistance=bear_15m.support_resistance, reasons=[], warnings=[],
+    )
+    analyses = {"4h": bull_4h, "1h": neutral_1h, "15m": bear_15m}
+    result = generate_signal("XAUUSD", analyses)
+    assert result.direction == SignalDirection.BUY
+    assert any("Pullback" in r for r in result.reasons)
+
+
 def test_is_actionable_property() -> None:
     analyses_buy = {
         "4h": _mk_analysis(Direction.BULLISH),

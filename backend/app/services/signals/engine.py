@@ -11,6 +11,7 @@ from app.services.signals.risk import compute_risk_reward
 from app.services.signals.rules import (
     PRIMARY_TIMEFRAME,
     blended_analysis_score,
+    check_pullback,
     multi_timeframe_gate,
 )
 from app.services.signals.types import SignalDirection, SignalResult
@@ -39,21 +40,27 @@ def generate_signal(
 
     gate = multi_timeframe_gate(analyses)
     if gate.direction == SignalDirection.WAIT:
-        return SignalResult(
-            symbol=symbol,
-            direction=SignalDirection.WAIT,
-            confidence=0.0,
-            timeframe=PRIMARY_TIMEFRAME,
-            entry=None,
-            stop_loss=None,
-            take_profit_1=None,
-            take_profit_2=None,
-            risk_reward=None,
-            breakdown={"gate": 0.0},
-            reasons=[gate.reason],
-            warnings=[w for r in analyses.values() for w in r.warnings],
-            generated_at=now,
-        )
+        # Fallback: pullback-in-trend can still fire even when the strict
+        # MTF agreement gate rejects.
+        pullback = check_pullback(analyses)
+        if pullback is not None:
+            gate = pullback  # override with pullback decision
+        else:
+            return SignalResult(
+                symbol=symbol,
+                direction=SignalDirection.WAIT,
+                confidence=0.0,
+                timeframe=PRIMARY_TIMEFRAME,
+                entry=None,
+                stop_loss=None,
+                take_profit_1=None,
+                take_profit_2=None,
+                risk_reward=None,
+                breakdown={"gate": 0.0},
+                reasons=[gate.reason],
+                warnings=[w for r in analyses.values() for w in r.warnings],
+                generated_at=now,
+            )
 
     assert primary is not None  # gate guarantees 15m exists
 

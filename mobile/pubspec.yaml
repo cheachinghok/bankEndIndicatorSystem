@@ -1,0 +1,44 @@
+name: gold_signals
+description: "AI-powered XAUUSD trading signals mobile app."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management
+  flutter_riverpod: ^2.6.1
+
+  # HTTP
+  dio: ^5.7.0
+
+  # WebSocket for live prices + signals
+  web_socket_channel: ^3.0.1
+
+  # Routing
+  go_router: ^14.6.2
+
+  # Charts (candles + equity curves)
+  fl_chart: ^0.69.0
+
+  # Env vars — API base URL, feature flags
+  flutter_dotenv: ^5.2.1
+
+  # Nice formatting
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - .env
